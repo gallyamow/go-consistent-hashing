@@ -227,6 +227,6 @@ func (h *Ring[T]) Get(key T) (string, error) {
 
 func hash(key []byte) uint64 {
 	// return crc32.ChecksumIEEE(key)
-	// этот хеш лучше, меньше коллизий, автор пишет что самый быстрый из всех
+	// этот хеш лучше, меньше коллизий, один из самых быстрых
 	return xxhash.Sum64(key)
 }

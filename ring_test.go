@@ -6,36 +6,68 @@ import (
 	"testing"
 
 	"github.com/cespare/xxhash/v2"
+	"github.com/stretchr/testify/assert"
 )
 
 type StrHasher struct{}
 
-func (h *StrHasher) Hash(key string) uint64 {
+func (h StrHasher) Hash(key string) uint64 {
 	return xxhash.Sum64String(key)
 }
 
-var strHasher = &StrHasher{}
+var strHasher = StrHasher{}
 
 func TestAddNode(t *testing.T) {
 	t.Run("should add node", func(t *testing.T) {
 		r := NewRing[string](strHasher)
-		if err := r.AddNode("a", 10); err != nil {
-			t.Fatalf("unexpected err: %v", err)
-		}
+
+		err := r.AddNode("a", 10)
+		assert.NoError(t, err)
 	})
 
 	t.Run("should reject duplicate", func(t *testing.T) {
 		r := NewRing[string](strHasher)
-		_ = r.AddNode("a", 10)
-		if err := r.AddNode("a", 10); err != ErrNodeAlreadyExists {
-			t.Fatalf("expected ErrNodeAlreadyExists, got %v", err)
-		}
+
+		err := r.AddNode("a", 10)
+		assert.NoError(t, err)
+		err = r.AddNode("a", 10)
+		assert.ErrorIs(t, err, ErrNodeAlreadyExists)
 	})
 
 	t.Run("should reject non-positive weight", func(t *testing.T) {
 		r := NewRing[string](strHasher)
-		if err := r.AddNode("a", 0); err != ErrInvalidWeight {
-			t.Fatalf("expected ErrInvalidWeight, got %v", err)
+
+		err := r.AddNode("a", 0)
+		assert.ErrorIs(t, err, ErrInvalidWeight)
+		err = r.AddNode("a", -10)
+		assert.ErrorIs(t, err, ErrInvalidWeight)
+	})
+}
+
+func TestRemoveNode(t *testing.T) {
+	t.Run("should error on missing node", func(t *testing.T) {
+		r := NewRing[string](strHasher)
+
+		err := r.RemoveNode("missing")
+		assert.ErrorIs(t, err, ErrNodeNotFound)
+	})
+
+	t.Run("should route keys away from removed node", func(t *testing.T) {
+		r := NewRing[string](strHasher)
+
+		err := r.AddNode("a", 50)
+		assert.NoError(t, err)
+
+		err = r.AddNode("b", 50)
+		assert.NoError(t, err)
+
+		err = r.RemoveNode("a")
+		assert.NoError(t, err)
+
+		for i := range 100 {
+			got, err := r.Get(fmt.Sprintf("key-%d", i))
+			assert.NoError(t, err)
+			assert.Equal(t, "b", got)
 		}
 	})
 }
@@ -43,26 +75,31 @@ func TestAddNode(t *testing.T) {
 func TestGet(t *testing.T) {
 	t.Run("should error on empty ring", func(t *testing.T) {
 		r := NewRing[string](strHasher)
-		if _, err := r.Get("key"); err != ErrRingEmpty {
-			t.Fatalf("expected ErrRingEmpty, got %v", err)
-		}
+
+		_, err := r.Get("key")
+		assert.ErrorIs(t, err, ErrRingEmpty)
 	})
 
 	t.Run("should be deterministic", func(t *testing.T) {
 		r := NewRing[string](strHasher)
-		_ = r.AddNode("a", 50)
-		_ = r.AddNode("b", 50)
+
+		err := r.AddNode("a", 50)
+		assert.NoError(t, err)
+		err = r.AddNode("b", 50)
+		assert.NoError(t, err)
 
 		first, _ := r.Get("key-1")
 		for range 100 {
-			if got, _ := r.Get("key-1"); got != first {
-				t.Fatalf("non-deterministic: %q then %q", first, got)
-			}
+			got, err := r.Get("key-1")
+
+			assert.NoError(t, err)
+			assert.Equal(t, first, got)
 		}
 	})
 
 	t.Run("should distribute keys across all nodes", func(t *testing.T) {
 		r := NewRing[string](strHasher)
+
 		nodes := []string{"a", "b", "c"}
 		for _, n := range nodes {
 			_ = r.AddNode(n, 100)
@@ -75,14 +112,13 @@ func TestGet(t *testing.T) {
 		}
 
 		for _, n := range nodes {
-			if counts[n] == 0 {
-				t.Fatalf("node %q got no keys: %v", n, counts)
-			}
+			assert.Greater(t, counts[n], 0)
 		}
 	})
 
 	t.Run("should give more keys to heavier node", func(t *testing.T) {
 		r := NewRing[string](strHasher)
+
 		_ = r.AddNode("light", 10)
 		_ = r.AddNode("heavy", 200)
 
@@ -98,34 +134,10 @@ func TestGet(t *testing.T) {
 	})
 }
 
-func TestRemoveNode(t *testing.T) {
-	t.Run("should error on missing node", func(t *testing.T) {
-		r := NewRing[string](strHasher)
-		if err := r.RemoveNode("missing"); err != ErrNodeNotFound {
-			t.Fatalf("expected ErrNodeNotFound, got %v", err)
-		}
-	})
-
-	t.Run("should route keys away from removed node", func(t *testing.T) {
-		r := NewRing[string](strHasher)
-		_ = r.AddNode("a", 50)
-		_ = r.AddNode("b", 50)
-
-		if err := r.RemoveNode("a"); err != nil {
-			t.Fatalf("unexpected err: %v", err)
-		}
-
-		for i := range 100 {
-			if got, _ := r.Get(fmt.Sprintf("key-%d", i)); got != "b" {
-				t.Fatalf("expected b, got %q", got)
-			}
-		}
-	})
-}
-
 func TestRemapping(t *testing.T) {
 	t.Run("should remap only small fraction on node add", func(t *testing.T) {
 		r := NewRing[string](strHasher)
+
 		nodes := []string{"a", "b", "c", "d"}
 		for _, n := range nodes {
 			_ = r.AddNode(n, 100)
